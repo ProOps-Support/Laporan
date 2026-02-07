@@ -26,7 +26,7 @@
     <script type="text/babel" data-type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-        import { getFirestore, collection, query, orderBy, onSnapshot, deleteDoc, updateDoc, addDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getFirestore, collection, query, orderBy, onSnapshot, deleteDoc, updateDoc, doc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyDbt7DDol8jNbi3HERDBQ0QoKePszS_ziY",
@@ -54,25 +54,43 @@
             const [formData, setFormData] = React.useState({ f1: '', f2: '', f3: '' });
 
             React.useEffect(() => {
-                signInAnonymously(auth);
+                const initAuth = async () => {
+                    await signInAnonymously(auth);
+                };
+                initAuth();
                 const unsubAuth = onAuthStateChanged(auth, setUser);
                 return () => unsubAuth();
             }, []);
 
             React.useEffect(() => {
                 if (!user) return;
+                
+                // Tentukan field pengurutan berdasarkan tipe koleksi
+                let orderField = 'timestamp';
+                if (type === 'incidents') orderField = 'date';
+                if (type === 'visitors') orderField = 'timeIn';
+
                 const q = query(
                     collection(db, 'artifacts', appId, 'public', 'data', type), 
-                    orderBy(type === 'incidents' ? 'date' : 'timestamp', 'desc')
+                    orderBy(orderField, 'desc')
                 );
+
                 const unsubscribe = onSnapshot(q, (snapshot) => {
                     setData(snapshot.docs.map(d => ({id: d.id, ...d.data()})));
-                }, (error) => console.error(error));
+                }, (error) => {
+                    console.warn("Query Error (Kemungkinan field order tidak ada):", error);
+                    // Fallback jika field orderField tidak ditemukan di dokumen lama
+                    const fallbackQ = query(collection(db, 'artifacts', appId, 'public', 'data', type));
+                    onSnapshot(fallbackQ, s => setData(s.docs.map(d => ({id: d.id, ...d.data()}))));
+                });
                 return () => unsubscribe();
             }, [type, user]);
 
             const filtered = data.filter(d => {
-                const dateVal = d.timestamp?.toDate ? d.timestamp.toDate() : new Date(d.timestamp || d.date || d.timeIn);
+                const rawDate = d.timestamp || d.date || d.timeIn;
+                if (!rawDate) return false;
+                
+                const dateVal = rawDate.toDate ? rawDate.toDate() : new Date(rawDate);
                 return !isNaN(new Date(dateVal).getTime()) && new Date(dateVal).toISOString().slice(0,7) === month;
             });
 
@@ -92,7 +110,7 @@
                 doc.setFontSize(10); doc.text(`Periode: ${month}`, 14, 28);
 
                 const tableRows = filtered.map(item => [
-                    new Date(item.timestamp?.toDate ? item.timestamp.toDate() : (item.timestamp||item.date)).toLocaleString('id-ID'),
+                    new Date(item.timestamp?.toDate ? item.timestamp.toDate() : (item.timestamp||item.date||item.timeIn)).toLocaleString('id-ID'),
                     item.officer || item.name,
                     item.location || item.company,
                     item.notes || item.status,
@@ -122,7 +140,7 @@
                 html += `<h2>Laporan ${labels.title} - ${month}</h2><table><thead><tr><th>Waktu</th><th>${labels.c2}</th><th>${labels.c3}</th><th>${labels.c4}</th><th>Foto</th></tr></thead><tbody>`;
                 filtered.forEach(d => {
                     const img = (d.photos?.length) ? `<img src="${d.photos[0]}" width="50" height="50">` : '-';
-                    html += `<tr><td>${new Date(d.timestamp?.toDate ? d.timestamp.toDate() : (d.timestamp||d.date)).toLocaleString('id-ID')}</td><td>${d.officer||d.name}</td><td>${d.location||d.company}</td><td>${d.notes||d.status}</td><td style="text-align:center">${img}</td></tr>`;
+                    html += `<tr><td>${new Date(d.timestamp?.toDate ? d.timestamp.toDate() : (d.timestamp||d.date||d.timeIn)).toLocaleString('id-ID')}</td><td>${d.officer||d.name}</td><td>${d.location||d.company}</td><td>${d.notes||d.status}</td><td style="text-align:center">${img}</td></tr>`;
                 });
                 html += `</tbody></table></body></html>`;
                 saveAs(new Blob([html], {type: 'application/vnd.ms-excel'}), `Laporan_${type}_${month}.xls`);
@@ -138,7 +156,7 @@
                             const base64Data = p.split(',')[1];
                             if(base64Data) {
                                 const name = (d.location || d.company || 'foto').replace(/[^a-z0-9]/gi, '_');
-                                const time = new Date(d.timestamp?.toDate ? d.timestamp.toDate() : (d.timestamp||d.date)).getTime();
+                                const time = new Date(d.timestamp?.toDate ? d.timestamp.toDate() : (d.timestamp||d.date||d.timeIn)).getTime();
                                 zip.file(`${name}_${time}_${i}.jpg`, base64Data, {base64:true}); count++;
                             }
                         } catch(e){}
@@ -148,7 +166,6 @@
                 saveAs(await zip.generateAsync({type:"blob"}), `Koleksi_Foto_${month}.zip`);
             };
 
-            // --- CRUD LOGIC ---
             const openEdit = (item) => {
                 setIsEditing(true); setSelectedId(item.id);
                 setFormData({ f1: item.officer || item.name || '', f2: item.location || item.company || '', f3: item.notes || item.status || '' });
@@ -177,7 +194,6 @@
                         <h1 className="text-2xl font-bold text-slate-800 flex items-center">
                             <i className="fas fa-shield-alt text-blue-600 mr-3"></i> Pusat Laporan Keamanan
                         </h1>
-                        {/* Tombol Home Baru */}
                         <a href="https://proops-support.github.io/App/" className="bg-slate-800 hover:bg-slate-900 text-white px-6 py-2.5 rounded-lg shadow-md flex gap-2 items-center font-bold transition duration-200">
                             <i className="fas fa-home"></i> Home
                         </a>
@@ -226,7 +242,9 @@
                             <tbody className="divide-y divide-slate-100">
                                 {filtered.map((item, i) => (
                                     <tr key={item.id} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50 hover:bg-blue-50 transition'}>
-                                        <td className="p-4 text-slate-600 whitespace-nowrap">{new Date(item.timestamp?.toDate ? item.timestamp.toDate() : (item.timestamp||item.date)).toLocaleString('id-ID')}</td>
+                                        <td className="p-4 text-slate-600 whitespace-nowrap">
+                                            {new Date(item.timestamp?.toDate ? item.timestamp.toDate() : (item.timestamp||item.date||item.timeIn)).toLocaleString('id-ID')}
+                                        </td>
                                         <td className="p-4 font-bold">{item.officer || item.name}</td>
                                         <td className="p-4"><span className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs font-bold uppercase">{item.location || item.company}</span></td>
                                         <td className="p-4 text-slate-500 italic">{item.notes || item.status || '-'}</td>
@@ -242,7 +260,7 @@
                                     </tr>
                                 ))}
                                 {filtered.length === 0 && (
-                                    <tr><td colSpan="6" className="p-16 text-center text-slate-400 italic">Tidak ada data untuk periode ini.</td></tr>
+                                    <tr><td colSpan="6" className="p-16 text-center text-slate-400 italic">Data tidak ditemukan untuk periode ini.</td></tr>
                                 )}
                             </tbody>
                         </table>
