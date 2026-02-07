@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Report Center</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.29/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-slate-100">
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { getFirestore, collection, query, orderBy, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDbt7DDol8jNbi3HERDBQ0QoKePszS_ziY",
+            authDomain: "guard-d75d6.firebaseapp.com",
+            projectId: "guard-d75d6",
+            storageBucket: "guard-d75d6.firebasestorage.app",
+            messagingSenderId: "610027210849",
+            appId: "1:610027210849:web:cae057a05b36ebccc10220"
+        };
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = 'dashboard-web-v1';
+
+        function ReportApp() {
+            const [type, setType] = React.useState('patrol_logs');
+            const [data, setData] = React.useState([]);
+            const [month, setMonth] = React.useState(new Date().toISOString().slice(0, 7));
+
+            React.useEffect(() => {
+                signInAnonymously(auth);
+                const q = query(collection(db, 'artifacts', appId, 'public', 'data', type), orderBy(type === 'incidents' ? 'date' : 'timestamp', 'desc'));
+                onSnapshot(q, s => setData(s.docs.map(d => ({id: d.id, ...d.data()}))));
+            }, [type]);
+
+            const filtered = data.filter(d => {
+                const date = new Date(d.timestamp || d.date || d.timeIn);
+                return date.toISOString().slice(0,7) === month;
+            });
+
+            const downloadExcel = () => {
+                if(filtered.length===0) return alert("Kosong");
+                let html = `<table border="1"><thead><tr><th>Waktu</th><th>Lokasi</th><th>Ket</th><th>Foto</th></tr></thead><tbody>`;
+                filtered.forEach(d => {
+                    html += `<tr><td>${new Date(d.timestamp||d.date).toLocaleString()}</td><td>${d.location||d.company}</td><td>${d.notes||d.status}</td><td>${d.photos?.length?'Ada':'-'}</td></tr>`;
+                });
+                html += `</tbody></table>`;
+                const blob = new Blob([html], {type: 'application/vnd.ms-excel'});
+                saveAs(blob, `Laporan_${type}_${month}.xls`);
+            };
+
+            const downloadZip = async () => {
+                if(filtered.length===0) return alert("Kosong");
+                const zip = new JSZip();
+                let count = 0;
+                filtered.forEach(d => {
+                    if(d.photos && d.photos.length) {
+                        d.photos.forEach((p, i) => {
+                            zip.file(`${d.location}_${i}.jpg`, p.split(',')[1], {base64:true});
+                            count++;
+                        });
+                    }
+                });
+                if(count>0) {
+                    const c = await zip.generateAsync({type:"blob"});
+                    saveAs(c, `Foto_${type}_${month}.zip`);
+                } else alert("Tidak ada foto.");
+            };
+
+            const deleteItem = async (id) => {
+                if(confirm("Hapus permanen?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', type, id));
+            };
+
+            return (
+                <div className="max-w-6xl mx-auto p-6">
+                    <div className="flex justify-between items-center mb-6">
+                        <h1 className="text-2xl font-bold text-slate-800"><i className="fas fa-file-invoice text-blue-600 mr-2"></i> Pusat Laporan</h1>
+                        <a href="index.html" className="text-blue-600 hover:underline">Kembali ke Dashboard</a>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-xl shadow mb-6 flex gap-4 items-center flex-wrap">
+                        <select value={type} onChange={e=>setType(e.target.value)} className="border p-2 rounded">
+                            <option value="patrol_logs">Laporan Patroli</option>
+                            <option value="incidents">Laporan Insiden</option>
+                            <option value="visitors">Data Tamu</option>
+                        </select>
+                        <input type="month" value={month} onChange={e=>setMonth(e.target.value)} className="border p-2 rounded"/>
+                        <button onClick={downloadExcel} className="bg-green-600 text-white px-4 py-2 rounded flex gap-2 items-center"><i className="fas fa-download"></i> Excel</button>
+                        <button onClick={downloadZip} className="bg-blue-600 text-white px-4 py-2 rounded flex gap-2 items-center"><i className="fas fa-images"></i> Foto ZIP</button>
+                    </div>
+
+                    <div className="bg-white rounded-xl shadow overflow-hidden">
+                        <table className="w-full text-sm text-left">
+                            <thead className="bg-slate-100 uppercase text-xs text-slate-600">
+                                <tr>
+                                    <th className="p-3">Waktu</th>
+                                    <th className="p-3">Detail</th>
+                                    <th className="p-3">Foto</th>
+                                    <th className="p-3 text-center">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {filtered.map(item => (
+                                    <tr key={item.id} className="border-b hover:bg-slate-50">
+                                        <td className="p-3">{new Date(item.timestamp||item.date||item.timeIn).toLocaleString('id-ID')}</td>
+                                        <td className="p-3">
+                                            <div className="font-bold">{item.officer || item.name}</div>
+                                            <div className="text-slate-500">{item.location || item.company}</div>
+                                            <div className="text-xs text-slate-400 italic">{item.notes || item.status}</div>
+                                        </td>
+                                        <td className="p-3">
+                                            <div className="flex -space-x-2">
+                                                {item.photos?.map((src,i) => <img key={i} src={src} className="w-8 h-8 rounded-full border border-white object-cover"/>)}
+                                                {!item.photos?.length && '-'}
+                                            </div>
+                                        </td>
+                                        <td className="p-3 text-center">
+                                            <button onClick={()=>deleteItem(item.id)} className="text-red-500 hover:text-red-700"><i className="fas fa-trash"></i></button>
+                                        </td>
+                                    </tr>
+                                ))}
+                                {filtered.length===0 && <tr><td colSpan="4" className="p-4 text-center text-slate-400">Tidak ada data.</td></tr>}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        }
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<ReportApp />);
+    </script>
+</body>
+</html>
